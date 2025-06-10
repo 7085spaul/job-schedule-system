@@ -6,7 +6,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Clock, Play, Pause, Trash2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { toast } from '@/components/ui/use-toast';
 
 interface Job {
@@ -27,9 +26,12 @@ const JobScheduler: React.FC = () => {
   const [newJob, setNewJob] = useState<Partial<Job>>({ type: 'hourly' });
   const [loading, setLoading] = useState(false);
 
-  const fetchJobs = async () => {
-    const { data } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
-    setJobs(data || []);
+  // Simple ID generator
+  const generateId = () => Math.random().toString(36).substring(2, 11);
+
+  const fetchJobs = () => {
+    // In a real application, you might load initial jobs from localStorage or a simple API here
+    // For this example, we'll just use the initial empty array.
   };
 
   const calculateNextRun = (job: Partial<Job>): Date => {
@@ -51,7 +53,7 @@ const JobScheduler: React.FC = () => {
     return next;
   };
 
-  const createJob = async () => {
+  const createJob = () => {
     if (!newJob.name) {
       toast({ title: 'Error', description: 'Job name is required', variant: 'destructive' });
       return;
@@ -59,79 +61,62 @@ const JobScheduler: React.FC = () => {
     setLoading(true);
     const nextRun = calculateNextRun(newJob);
     
-    const { data, error } = await supabase.from('jobs').insert({
+    const jobToAdd: Job = {
+      id: generateId(),
       name: newJob.name,
-      type: newJob.type,
+      type: newJob.type || 'hourly',
       minute: newJob.minute,
       hour: newJob.hour,
       day_of_week: newJob.day_of_week,
       is_active: true,
-      next_run: nextRun.toISOString()
-    }).select().single();
+      next_run: nextRun.toISOString(),
+      last_run: undefined,
+    };
     
-    if (error) {
-      toast({ title: 'Error', description: 'Failed to create job', variant: 'destructive' });
-    } else {
-      setJobs(prev => [data, ...prev]);
-      setNewJob({ type: 'hourly' });
-      toast({ title: 'Success', description: 'Job created successfully' });
-    }
+    setJobs(prev => [jobToAdd, ...prev]);
+    setNewJob({ type: 'hourly' });
+    toast({ title: 'Success', description: 'Job created successfully' });
     setLoading(false);
   };
 
   const executeJob = async (job: Job) => {
     try {
-      // Call backend function to execute job
-      const response = await fetch(
-        'https://ptuzarufwgdwfzmacnab.supabase.co/functions/v1/764dfe57-a160-4d4e-ab94-967e838e7c6b',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'execute', jobId: job.id })
-        }
+      // Simulate job execution
+      console.log(`Job "${job.name}" executed: Hello World!`);
+      setExecutions(prev => [
+        `[${new Date().toLocaleTimeString()}] Job "${job.name}" executed: Hello World!`,
+        ...prev.slice(0, 9)
+      ]);
+      
+      // Update job with next run time and last run time locally
+      const nextRun = calculateNextRun(job);
+      setJobs(prevJobs =>
+        prevJobs.map(j =>
+          j.id === job.id
+            ? { ...j, last_run: new Date().toISOString(), next_run: nextRun.toISOString() }
+            : j
+        )
       );
       
-      const result = await response.json();
-      
-      if (result.success) {
-        console.log(`Job "${job.name}" executed: Hello World!`);
-        setExecutions(prev => [
-          `[${new Date().toLocaleTimeString()}] Job "${job.name}" executed: Hello World!`,
-          ...prev.slice(0, 9)
-        ]);
-        
-        // Log execution to database
-        await supabase.from('job_executions').insert({
-          job_id: job.id,
-          output: 'Hello World'
-        });
-        
-        // Update job with next run time
-        const nextRun = calculateNextRun(job);
-        await supabase.from('jobs').update({
-          last_run: new Date().toISOString(),
-          next_run: nextRun.toISOString()
-        }).eq('id', job.id);
-        
-        fetchJobs();
-      }
     } catch (error) {
       console.error('Job execution failed:', error);
     }
   };
 
-  const toggleJobStatus = async (jobId: string, isActive: boolean) => {
-    await supabase.from('jobs').update({ is_active: !isActive }).eq('id', jobId);
-    fetchJobs();
+  const toggleJobStatus = (jobId: string, isActive: boolean) => {
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
+        job.id === jobId ? { ...job, is_active: !isActive } : job
+      )
+    );
   };
 
-  const deleteJob = async (jobId: string) => {
-    await supabase.from('jobs').delete().eq('id', jobId);
-    fetchJobs();
+  const deleteJob = (jobId: string) => {
+    setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
   };
 
   useEffect(() => {
-    fetchJobs();
+    fetchJobs(); // This will no longer fetch from Supabase, just initialize local state if needed
   }, []);
 
   useEffect(() => {
@@ -203,20 +188,9 @@ const JobScheduler: React.FC = () => {
                     type="number" 
                     min="0" 
                     max="23" 
-                    placeholder="0"
+                    placeholder="0" 
                     value={newJob.hour || ''} 
                     onChange={(e) => setNewJob(prev => ({ ...prev, hour: parseInt(e.target.value) || 0 }))}
-                  />
-                </div>
-                <div>
-                  <Label>Minute (0-59)</Label>
-                  <Input 
-                    type="number" 
-                    min="0" 
-                    max="59" 
-                    placeholder="0"
-                    value={newJob.minute || ''} 
-                    onChange={(e) => setNewJob(prev => ({ ...prev, minute: parseInt(e.target.value) || 0 }))}
                   />
                 </div>
               </>
@@ -224,103 +198,84 @@ const JobScheduler: React.FC = () => {
             
             {newJob.type === 'weekly' && (
               <div>
-                <Label>Day of Week</Label>
-                <Select 
-                  value={newJob.day_of_week?.toString()} 
-                  onValueChange={(value) => setNewJob(prev => ({ ...prev, day_of_week: parseInt(value) }))}
-                >
-                  <SelectTrigger><SelectValue placeholder="Select day" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">Sunday</SelectItem>
-                    <SelectItem value="1">Monday</SelectItem>
-                    <SelectItem value="2">Tuesday</SelectItem>
-                    <SelectItem value="3">Wednesday</SelectItem>
-                    <SelectItem value="4">Thursday</SelectItem>
-                    <SelectItem value="5">Friday</SelectItem>
-                    <SelectItem value="6">Saturday</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Day of Week (0-6, Sun-Sat)</Label>
+                <Input 
+                  type="number" 
+                  min="0" 
+                  max="6" 
+                  placeholder="0" 
+                  value={newJob.day_of_week || ''} 
+                  onChange={(e) => setNewJob(prev => ({ ...prev, day_of_week: parseInt(e.target.value) || 0 }))}
+                />
               </div>
             )}
+            
+            <div className="flex items-end">
+              <Button onClick={createJob} disabled={loading}>
+                {loading ? 'Creating...' : 'Create Job'}
+              </Button>
+            </div>
           </div>
-          <Button 
-            onClick={createJob} 
-            disabled={loading || !newJob.name} 
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-          >
-            {loading ? 'Creating...' : 'Create Job'}
-          </Button>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Jobs ({jobs.filter(j => j.is_active).length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {jobs.map(job => (
-                <div key={job.id} className="p-4 border rounded-lg bg-gradient-to-r from-gray-50 to-gray-100 hover:from-gray-100 hover:to-gray-200 transition-all">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-medium text-gray-900">{job.name}</div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={job.is_active ? 'default' : 'secondary'}>
-                        {job.is_active ? 'Active' : 'Paused'}
+          
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-blue-700">Scheduled Jobs</h3>
+            {jobs.length === 0 ? (
+              <p className="text-gray-600">No jobs scheduled yet.</p>
+            ) : (
+              jobs.map(job => (
+                <Card key={job.id} className="shadow-sm hover:shadow-md transition-shadow">
+                  <CardContent className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div className="flex-grow">
+                      <h4 className="font-bold text-gray-800 text-lg">{job.name}</h4>
+                      <p className="text-sm text-gray-600">Type: {job.type}</p>
+                      {job.next_run && (
+                        <p className="text-sm text-gray-600">Next Run: {new Date(job.next_run).toLocaleString()}</p>
+                      )}
+                      {job.last_run && (
+                        <p className="text-sm text-gray-600">Last Run: {new Date(job.last_run).toLocaleString()}</p>
+                      )}
+                      <Badge variant={job.is_active ? 'default' : 'secondary'} className="mt-2">
+                        {job.is_active ? 'Active' : 'Inactive'}
                       </Badge>
+                    </div>
+                    <div className="flex gap-2">
                       <Button 
-                        size="sm" 
-                        variant="ghost" 
+                        variant="outline" 
+                        size="icon" 
                         onClick={() => toggleJobStatus(job.id, job.is_active)}
+                        className="text-green-600 hover:text-green-800"
                       >
                         {job.is_active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                       </Button>
                       <Button 
-                        size="sm" 
-                        variant="ghost" 
+                        variant="outline" 
+                        size="icon" 
                         onClick={() => deleteJob(job.id)}
                         className="text-red-600 hover:text-red-800"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    <div>Type: {job.type}</div>
-                    <div>Next run: {job.next_run ? new Date(job.next_run).toLocaleString() : 'Not scheduled'}</div>
-                    {job.last_run && <div>Last run: {new Date(job.last_run).toLocaleString()}</div>}
-                  </div>
-                </div>
-              ))}
-              {jobs.length === 0 && (
-                <div className="text-center text-gray-500 py-8">
-                  No jobs scheduled yet. Create your first job above!
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Execution Log</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {executions.map((log, index) => (
-                <div key={index} className="text-sm font-mono bg-green-50 border border-green-200 p-3 rounded-lg">
-                  {log}
-                </div>
-              ))}
-              {executions.length === 0 && (
-                <div className="text-center text-gray-500 py-8">
-                  No executions yet. Jobs will appear here when they run.
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+          
+          <div className="space-y-2">
+            <h3 className="text-lg font-semibold text-blue-700">Execution Log</h3>
+            {executions.length === 0 ? (
+              <p className="text-gray-600">No executions yet.</p>
+            ) : (
+              <ul className="list-disc list-inside bg-gray-50 p-4 rounded-md border border-gray-200 h-40 overflow-y-auto">
+                {executions.map((log, index) => (
+                  <li key={index} className="text-sm text-gray-700">{log}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };
